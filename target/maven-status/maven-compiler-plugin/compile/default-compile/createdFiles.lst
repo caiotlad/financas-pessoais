@@ -1,0 +1,14 @@
+br/com/portfolio/financas/FinanceDtos.class
+br/com/portfolio/financas/FinanceDtos$Direction.class
+br/com/portfolio/financas/FinanceDtos$CategoryTotal.class
+br/com/portfolio/financas/FinanceDtos$MonthlyReport.class
+br/com/portfolio/financas/FinanceDtos$AccountResponse.class
+br/com/portfolio/financas/FinanceDtos$CreateCategoryRequest.class
+br/com/portfolio/financas/FinancasApplication.class
+br/com/portfolio/financas/FinanceDtos$CreateAccountRequest.class
+br/com/portfolio/financas/ApiExceptionHandler.class
+br/com/portfolio/financas/FinanceDtos$TransactionResponse.class
+br/com/portfolio/financas/FinanceDtos$CreateTransactionRequest.class
+br/com/portfolio/financas/FinanceController.class
+br/com/portfolio/financas/FinanceDtos$CategoryResponse.class
+br/com/portfolio/financas/FinanceService.class
