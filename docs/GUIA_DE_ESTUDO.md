@@ -1,14 +1,35 @@
-# Guia de estudo: finanças pessoais
+# Explicação do projeto: finanças pessoais
 
-## 1. Caminho de leitura
+Este é meu registro do que implementei na API de finanças pessoais e das escolhas que fiz para estudar backend e banco de dados. Eu deixei os exemplos de chamadas em docs/API.md e a estrutura do banco em uma migração Flyway.
 
-1. `src/main/resources/db/migration/V1__schema_inicial.sql`: entenda tabelas, chaves e índices antes de ler Java.
-2. `FinanceDtos.java`: veja o formato das entradas e saídas HTTP e as validações de campo.
-3. `FinanceController.java`: acompanhe cabeçalhos, parâmetros e rotas.
-4. `FinanceService.java`: siga as regras de negócio e o SQL executado.
-5. `ApiExceptionHandler.java`: veja como erros de validação e violações do banco viram respostas HTTP.
+## O que eu implementei
 
-## 2. Modelo de dados
+Implementei uma API para criar contas, categorias e lançamentos, além de consultar movimentações e totais mensais. Usei Spring JDBC para manter o SQL visível no código. Consegui compilar o projeto; ainda não rodei a aplicação integrada a um PostgreSQL neste ambiente.
+
+## Como organizei os arquivos
+
+```text
+01-financas-pessoais/
+├── docs/
+│   ├── API.md
+│   └── GUIA_DE_ESTUDO.md
+├── src/main/java/br/com/portfolio/financas/
+│   ├── FinancasApplication.java
+│   ├── FinanceController.java
+│   ├── FinanceDtos.java
+│   ├── FinanceService.java
+│   └── ApiExceptionHandler.java
+├── src/main/resources/
+│   ├── application.properties
+│   └── db/migration/V1__schema_inicial.sql
+├── compose.yaml
+├── pom.xml
+└── README.md
+```
+
+Eu separei as responsabilidades: o controller recebe HTTP, os DTOs definem os dados aceitos e devolvidos, o serviço aplica as regras e executa SQL, e a migração descreve a estrutura persistida.
+
+## Modelo de dados que escolhi
 
 ```mermaid
 erDiagram
@@ -38,45 +59,37 @@ erDiagram
     }
 ```
 
-`owner_id` representa o dono lógico do conjunto de dados. A chave estrangeira `(owner_id, account_id)` referencia `(owner_id, id)` da conta; a mesma regra vale para categorias. Assim, o próprio banco ajuda a manter o isolamento entre os UUIDs, mesmo se um erro de aplicação deixar passar uma associação inválida.
+Eu mantive três tabelas principais. Uma transação pertence a uma conta e a uma categoria. Também gravei owner_id nas tabelas relacionadas e usei chaves estrangeiras compostas para o PostgreSQL impedir relações entre dados de proprietários diferentes.
 
-## 3. Fluxo para registrar uma transação
+## Como uma transação percorre a aplicação
 
-1. A requisição informa `X-Owner-Id`, conta, categoria, direção, valor, descrição e data/hora.
-2. Bean Validation rejeita campos ausentes, texto vazio, valor menor que um centavo ou descrição longa demais.
-3. `FinanceService` confirma que a conta pertence ao proprietário.
-4. O serviço confirma que a categoria pertence ao proprietário e que sua direção combina com a transação.
-5. O `INSERT` grava o evento financeiro. A tabela guarda uma entrada de receita ou despesa; ela não armazena um saldo que precise ser atualizado em paralelo.
-6. O banco valida as chaves estrangeiras e as restrições `CHECK`.
+1. O cliente envia X-Owner-Id e os campos da transação.
+2. Bean Validation verifica campos obrigatórios, tamanho de texto e valor monetário.
+3. FinanceController encaminha a solicitação para FinanceService.
+4. O serviço confirma que a conta e a categoria pertencem ao owner_id informado.
+5. O serviço compara a direção da categoria com a direção da transação.
+6. Só então o INSERT grava o lançamento; as chaves e os CHECKs do banco validam novamente as relações e o valor.
 
-Como o saldo é calculado a partir do histórico, duas fontes de verdade não precisam ser atualizadas juntas. A contrapartida é que relatórios podem ficar mais custosos quando o volume crescer; é aí que índices, particionamento ou agregações pré-calculadas podem ser estudados.
+Eu não atualizo um saldo armazenado em paralelo. O saldo mensal é calculado somando o histórico; assim evito manter duas cópias do mesmo fato financeiro.
 
-## 4. Dinheiro e data
+## Por que usei esses tipos e consultas
 
-`BigDecimal` evita erro de representação binária típico de ponto flutuante. A aplicação aceita no máximo duas casas decimais, e o banco exige valor positivo. As datas são armazenadas como `TIMESTAMPTZ`; o relatório interpreta o mês em UTC. Em uma versão para pessoas usuárias, o fuso horário escolhido por cada pessoa precisaria ser armazenado explicitamente.
+Para dinheiro, usei BigDecimal em Java e NUMERIC(14,2) no PostgreSQL. Evitei double porque ele pode representar frações decimais com aproximação binária. Neste MVP, todos os valores são tratados como reais (BRL).
 
-O MVP assume que todos os valores estão em reais (BRL); ele não guarda moeda nem faz conversão. Se moedas diferentes forem adicionadas, o modelo e os relatórios precisam impedir somas sem conversão.
+Para datas, gravei TIMESTAMPTZ e calculei os meses em UTC. O resumo mensal soma receitas e despesas com SUM e FILTER, usa COALESCE quando não há lançamentos e agrupa despesas por categoria. O intervalo começa no primeiro instante do mês e termina antes do mês seguinte.
 
-## 5. Consulta mensal
+Criei índices começando por owner_id, pois minhas consultas filtram os registros do proprietário antes de ordenar ou agrupar. Ainda preciso comparar planos com EXPLAIN ANALYZE quando puder executar um banco local.
 
-O SQL do resumo usa `SUM(...) FILTER (WHERE ...)` para somar receitas e despesas na mesma consulta. `COALESCE` transforma o resultado vazio em zero. O agrupamento por categoria é uma segunda consulta, que retorna uma linha por categoria com gasto no mês.
+## Limites que deixei registrados
 
-O intervalo de datas inclui o primeiro instante do mês e exclui o primeiro instante do seguinte. Essa convenção evita problemas de precisão como “último segundo do mês” e permite usar o índice `(owner_id, occurred_at)`.
+X-Owner-Id serve para separar dados de demonstração, mas não autentica quem faz a requisição. Uma pessoa pode tentar enviar outro UUID. Por isso, eu mantenho este projeto para execução local e não uso dados financeiros reais.
 
-## 6. Paginação e índices
+Também não implementei login, autorização real, edição ou exclusão de lançamentos, recorrência, orçamento ou conversão de moedas.
 
-O endpoint de listagem limita páginas a 100 itens. `ORDER BY occurred_at DESC, id` mantém a ordem determinística quando duas transações têm o mesmo horário. `LIMIT/OFFSET` é simples para um MVP, mas offsets grandes obrigam o banco a percorrer linhas anteriores; paginação por cursor é uma evolução possível.
+## Próximos passos que anotei
 
-Os índices começam com `owner_id`, porque as consultas filtram primeiro pelo proprietário. Leia `EXPLAIN ANALYZE` no PostgreSQL para comparar o plano antes e depois de remover ou adicionar um índice em uma cópia local do banco.
+- Implementar autenticação e derivar o proprietário da identidade validada, em vez de confiar no cabeçalho.
+- Criar orçamento mensal por categoria.
+- Avaliar paginação por cursor para listas maiores.
+- Adicionar testes de integração para isolamento entre proprietários e para os totais do relatório.
 
-## 7. Exercícios para continuar
-
-- Adicione endpoint de edição de descrição e de exclusão lógica, discutindo como corrigir lançamentos sem apagar histórico.
-- Implemente autenticação real e derive `owner_id` da identidade validada, removendo a confiança no cabeçalho.
-- Adicione orçamento mensal por categoria e defina como tratar categorias renomeadas.
-- Troque `OFFSET` por cursor baseado em `(occurred_at, id)`.
-- Acrescente testes de integração que provem o isolamento entre proprietários.
-
-## 8. Limites de segurança
-
-O cabeçalho `X-Owner-Id` é escolhido pelo cliente e não é credencial. Qualquer pessoa que consiga acessar a API pode enviar outro UUID. A aplicação serve para aprendizado local e não deve ser publicada com dados reais antes de implementar autenticação, autorização, limites de requisição e proteção operacional.
